@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Student Counseling System</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-content">
+                <h1>🧠 AI Student Counseling System</h1>
+                <p>Your personal mental health companion</p>
+            </div>
+            <div class="mood-indicator" id="currentMood">Current Mood: Neutral</div>
+        </div>
+        
+        <div class="chat-container">
+            <div class="messages" id="messages">
+                <div class="message bot-message">
+                    <div class="bubble">
+                        <p>👋 Hello! I'm your AI counseling companion. I'm here to help you with stress, anxiety, mood concerns, and provide personalized support.</p>
+                        <p style="margin-top: 10px;">Feel free to share what's on your mind.</p>
+                        <div class="quick-actions">
+                            <div class="quick-btn" onclick="quickMessage('I am feeling stressed about exams')">😰 Feeling Stressed</div>
+                            <div class="quick-btn" onclick="quickMessage('I am anxious about my future')">😟 Feeling Anxious</div>
+                            <div class="quick-btn" onclick="quickMessage('I feel unmotivated and sad')">😔 Feeling Down</div>
+                            <div class="quick-btn" onclick="quickMessage('I had a great day today')">😊 Feeling Good</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="typing-indicator" id="typingIndicator">
+                AI is thinking<span class="typing-dots"><span></span><span></span><span></span></span>
+            </div>
+            
+            <div class="input-container">
+                <div class="input-row">
+                    <input type="text" class="input-field" id="messageInput"
+                           placeholder="Share what's on your mind..."
+                           onkeypress="handleKeyPress(event)">
+                    <button class="send-btn" onclick="sendMessage()">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
