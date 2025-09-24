@@ -6,15 +6,23 @@ const messageInput = document.getElementById('messageInput');
 const typingIndicator = document.getElementById('typingIndicator');
 const moodIndicator = document.getElementById('currentMood');
 
+// --- NEW: User ID Management ---
+let userId = localStorage.getItem('chatbotUserId');
+if (!userId) {
+    userId = 'user-' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    localStorage.setItem('chatbotUserId', userId);
+}
+// --------------------------------
+
 // Add a message to the chat window
 function addMessage(content, isUser = false) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
-    
+
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.innerHTML = content;
-    
+
     messageDiv.appendChild(bubble);
     messagesContainer.appendChild(messageDiv);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -40,10 +48,15 @@ function createBotResponseHTML(response) {
         return html;
     }
 
+    // --- NEW: Handle Proactive Messages ---
+    if (response.mood === 'proactive') {
+        return `<p>${response.recommendations.message}</p>`;
+    }
+
     // Handle regular responses
     let html = `<p>${response.recommendations.message}</p>`;
     html += `<div class="mood-badge mood-${response.mood}">
-        Detected Mood: ${response.mood.charAt(0).toUpperCase() + response.mood.slice(1)} 
+        Detected Mood: ${response.mood.charAt(0).toUpperCase() + response.mood.slice(1)}
         (${Math.round(response.confidence * 100)}% confidence)
     </div>`;
 
@@ -75,12 +88,19 @@ function hideTypingIndicator() { typingIndicator.style.display = 'none'; }
 // Send message to the backend
 async function sendMessage() {
     const message = messageInput.value.trim();
-    if (!message) return;
+
+    // --- UPDATED: Handle empty message for proactive check-in ---
+    if (message === '' && (messagesContainer.children.length > 1 || !userId)) {
+        // This is a manual empty send, we can ignore it
+        return;
+    }
 
     // Display user's message
-    addMessage(message, true);
-    messageInput.value = '';
-    
+    if (message !== '') {
+        addMessage(message, true);
+        messageInput.value = '';
+    }
+
     // Show typing indicator
     showTypingIndicator();
 
@@ -91,7 +111,7 @@ async function sendMessage() {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ message: message }),
+            body: JSON.stringify({ message: message, user_id: userId }), // Pass userId
         });
 
         if (!response.ok) {
@@ -99,16 +119,22 @@ async function sendMessage() {
         }
 
         const data = await response.json();
-        
+
         // Hide typing indicator
         hideTypingIndicator();
-        
+
         // Display bot's response
         const responseHTML = createBotResponseHTML(data);
         addMessage(responseHTML, false);
-        
+
         // Update mood indicator
         updateMoodIndicator(data.mood);
+
+        // Update userId from the response if it was newly generated
+        if (data.user_id && data.user_id !== userId) {
+            userId = data.user_id;
+            localStorage.setItem('chatbotUserId', userId);
+        }
 
     } catch (error) {
         hideTypingIndicator();
@@ -133,4 +159,8 @@ function handleKeyPress(event) {
 // Initial focus on the input field
 document.addEventListener('DOMContentLoaded', () => {
     messageInput.focus();
+    // NEW: Check for proactive message on first load for a new session
+    if (!localStorage.getItem('chatbotUserId')) {
+        sendMessage();
+    }
 });
