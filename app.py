@@ -4,13 +4,19 @@ import pickle
 import re
 from datetime import datetime, timedelta
 import uuid
+import random
+
+# --- NEW: Import libraries for Multimodality (Conceptual) ---
+# NOTE: These libraries would need to be installed in your environment.
+# from PIL import Image
+# import io
+# import requests # For API calls to a voice-to-text service or a multimodal model
+# -----------------------------------------------------------------
 
 # --- Initialize Flask App ---
 app = Flask(__name__)
 
 # --- In-memory user session state ---
-# In a production environment, this would be a database or a more robust
-# session management system (e.g., Flask-Session)
 user_sessions = {}
 
 # --- Load the Trained Model ---
@@ -31,8 +37,48 @@ def preprocess_text(text):
     return text.strip()
 
 
+# --- NEW: Conceptual Image Analysis Function ---
+def analyze_image(image_data):
+    """
+    (CONCEPTUAL) Analyzes an image for relevant context (e.g., a cluttered desk).
+    This would use a pre-trained image analysis model or API.
+    """
+    # Placeholder logic
+    # try:
+    #     image = Image.open(io.BytesIO(image_data))
+    #     # Here, you would call a multimodal model API (e.g., a local model or a cloud service)
+    #     # to describe the image.
+    #     description = "A messy desk with many books and papers."
+    #     if "messy desk" in description or "cluttered room" in description:
+    #         return "cluttered"
+    #     return "neutral_image"
+    # except Exception as e:
+    #     print(f"Error analyzing image: {e}")
+    #     return "error"
+    return "cluttered"  # For demonstration purposes
+
+
+# --- NEW: Conceptual Voice Analysis Function ---
+def analyze_voice(voice_data):
+    """
+    (CONCEPTUAL) Analyzes a voice for sentiment and transcribes it.
+    This would use a voice-to-text service and a sentiment analysis model.
+    """
+    # Placeholder logic
+    # try:
+    #     # Send voice_data to a voice-to-text API
+    #     transcribed_text = "I'm feeling so stressed about my finals."
+    #     # Analyze the sentiment of the transcribed text
+    #     sentiment = "stressed"
+    #     return transcribed_text, sentiment
+    # except Exception as e:
+    #     print(f"Error analyzing voice: {e}")
+    #     return "", "error"
+    return "I am feeling so stressed.", "stressed"  # For demonstration purposes
+
+
 class ResourceProvider:
-    """Provides resources and recommendations based on mood"""
+    """Provides resources and recommendations based on mood and conversational context"""
 
     def __init__(self):
         self.resources = {
@@ -75,21 +121,47 @@ class ResourceProvider:
                 "message": "You seem to be in a balanced state. This is a great time for maintenance and prevention:",
                 'maintenance': ["Keep up with your current healthy routines", "Maintain your social connections",
                                 "Practice daily gratitude"],
+            },
+            # --- NEW: Image-specific recommendations ---
+            'cluttered': {
+                "message": "I see you're dealing with a cluttered space. Sometimes a little organization can help clear the mind!",
+                "tips": ["Break down the decluttering process into small steps.",
+                         "Start with one small area at a time.", "Put on some motivating music while you work."],
             }
         }
+
         self.proactive_messages = [
             "Hi there! Just checking in. How are you feeling today?",
             "Hey! It's been a while. How can I help you right now?",
-            "How's your day going? I'm here if you need to talk."
+            "How's your day going? I'm here if you need to talk.",
+            "I'm here to listen, whenever you're ready.",
+            "Just wanted to say hi. Hope you're having a good day.",
         ]
+
+        self.general_talks = [
+            "Sometimes the first step is the hardest. Just sharing what’s on your mind can make a big difference.",
+            "It's completely okay to not have all the answers. Let's just talk it through.",
+            "You know, a lot of students feel this way. You're not alone in this.",
+            "Wait, the more you think, the worse it gets. Let's try to focus on one thing at a time.",
+            "It's like a mental traffic jam. Let's try to clear a path, one thought at a time.",
+            "Remember, your feelings are valid. What you're going through is real."
+        ]
+
+        self.instruction_responses = {
+            "schedule": "I can't create a real-time schedule, but here's a simple one to help you manage: 1. Take a 5-minute break. 2. Do one small task. 3. Take another break. This helps prevent burnout.",
+        }
 
     def get_recommendations(self, mood):
         return self.resources.get(mood, self.resources['neutral'])
 
     def get_proactive_message(self):
-        # A simple way to get a random proactive message
-        import random
         return random.choice(self.proactive_messages)
+
+    def get_general_talk(self):
+        return random.choice(self.general_talks)
+
+    def get_instruction_response(self, instruction_key):
+        return self.instruction_responses.get(instruction_key)
 
 
 class StudentCounselingChatbot:
@@ -115,31 +187,45 @@ class StudentCounselingChatbot:
 
         processed_text = preprocess_text(user_input)
 
+        # Check for instruction-based queries
+        if 'schedule' in processed_text or 'create a schedule' in processed_text:
+            return {
+                'emergency': False,
+                'mood': 'instruction',
+                'confidence': 1.0,
+                'recommendations': {
+                    'message': self.resource_provider.get_instruction_response("schedule")
+                }
+            }
+
         # Check for previous stressed state
         last_mood_data = user_sessions.get(user_id)
         current_time = datetime.now()
 
-        # Define a persistence window for the 'stressed' state
         STRESS_PERSISTENCE_MINS = 30
 
         if last_mood_data and last_mood_data['mood'] == 'stressed' and \
                 (current_time - last_mood_data['timestamp']).total_seconds() / 60 < STRESS_PERSISTENCE_MINS:
 
             mood = 'stressed'
-            confidence = last_mood_data['confidence']  # Keep the original confidence
+            confidence = last_mood_data['confidence']
         else:
-            # Predict new mood if not in a recent stressed state
             mood = self.model.predict([processed_text])[0]
             confidence = max(self.model.predict_proba([processed_text])[0])
 
-        # Update user session with the new mood and timestamp
+        # Add general talk for non-stressed, non-emergency messages for a more human feel
+        if mood not in ['stressed', 'depressed', 'anxious'] and confidence < 0.8:
+            response_message = f"{self.resource_provider.get_general_talk()} {self.resource_provider.get_recommendations(mood)['message']}"
+            recommendations = self.resource_provider.get_recommendations(mood)
+            recommendations['message'] = response_message
+        else:
+            recommendations = self.resource_provider.get_recommendations(mood)
+
         user_sessions[user_id] = {
             'mood': mood,
             'confidence': confidence,
             'timestamp': current_time
         }
-
-        recommendations = self.resource_provider.get_recommendations(mood)
 
         response = {
             'emergency': False,
@@ -153,7 +239,7 @@ class StudentCounselingChatbot:
         return {
             'emergency': False,
             'mood': 'proactive',
-            'confidence': 1.0,  # This is a hard-coded confidence for a system message
+            'confidence': 1.0,
             'recommendations': {
                 'message': self.resource_provider.get_proactive_message()
             }
@@ -184,28 +270,59 @@ def chat_endpoint():
     user_input = user_data.get("message")
     user_id = user_data.get("user_id")
 
-    # If this is a new user, assign a new ID.
     if not user_id:
         user_id = str(uuid.uuid4())
         response = chatbot.get_proactive_response(user_id)
+        response['user_id'] = user_id
         return jsonify(response)
 
-    # Check for proactive engagement opportunity
     last_interaction = user_sessions.get(user_id)
-    if last_interaction:
+    if last_interaction and user_input == '':
         time_since_last_message_mins = (datetime.now() - last_interaction['timestamp']).total_seconds() / 60
         PROACTIVE_CHECKIN_THRESHOLD_MINS = 60
 
-        if time_since_last_message_mins > PROACTIVE_CHECKIN_THRESHOLD_MINS and user_input == '':
+        if time_since_last_message_mins > PROACTIVE_CHECKIN_THRESHOLD_MINS:
             response = chatbot.get_proactive_response(user_id)
+            response['user_id'] = user_id
             return jsonify(response)
 
     if not user_input:
         return jsonify({"error": "No message provided"}), 400
 
     response = chatbot.analyze_input(user_input, user_id)
-    response['user_id'] = user_id  # Return the user ID to the client
+    response['user_id'] = user_id
     return jsonify(response)
+
+
+# --- NEW: API Endpoint for Image-based Analysis (Conceptual) ---
+@app.route("/chat/image", methods=['POST'])
+def chat_image_endpoint():
+    """
+    (CONCEPTUAL) Handles image messages.
+    This would accept an image file and use a conceptual model to analyze it.
+    """
+    # if not chatbot:
+    #     return jsonify({"error": "Chatbot is not initialized."}), 500
+
+    # user_id = request.form.get("user_id")
+    # image_file = request.files.get("image")
+
+    # if not user_id or not image_file:
+    #     return jsonify({"error": "Missing user ID or image file"}), 400
+
+    # image_data = image_file.read()
+    # image_analysis_result = analyze_image(image_data)
+
+    # if image_analysis_result == "cluttered":
+    #     recommendations = chatbot.resource_provider.resources['cluttered']
+    #     return jsonify({
+    #         "mood": "cluttered",
+    #         "recommendations": recommendations,
+    #         "user_id": user_id
+    #     })
+    # else:
+    #     return jsonify({"error": "Could not analyze image or no relevant context found."}), 400
+    return jsonify({"error": "Image analysis feature is not implemented in this version."}), 501
 
 
 # --- Run the App ---
