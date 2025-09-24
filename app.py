@@ -1,330 +1,182 @@
-# app.py
-from flask import Flask, request, jsonify, render_template
+# train.py
 import pickle
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split, GridSearchCV
 import re
-from datetime import datetime, timedelta
-import uuid
-import random
 
-# --- NEW: Import libraries for Multimodality (Conceptual) ---
-# NOTE: These libraries would need to be installed in your environment.
-# from PIL import Image
-# import io
-# import requests # For API calls to a voice-to-text service or a multimodal model
-# -----------------------------------------------------------------
-
-# --- Initialize Flask App ---
-app = Flask(__name__)
-
-# --- In-memory user session state ---
-user_sessions = {}
-
-# --- Load the Trained Model ---
-try:
-    with open('mood_model.pkl', 'rb') as f:
-        model = pickle.load(f)
-    print("Mood detection model loaded successfully.")
-except FileNotFoundError:
-    print("Error: 'mood_model.pkl' not found. Please run train.py first to create the model.")
-    model = None
+print("Starting model training process...")
 
 
-# --- Helper Classes and Functions ---
-def preprocess_text(text):
-    text = text.lower()
-    text = re.sub(r'[^a-zA-Z\s]', '', text)
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
-
-
-# --- NEW: Conceptual Image Analysis Function ---
-def analyze_image(image_data):
-    """
-    (CONCEPTUAL) Analyzes an image for relevant context (e.g., a cluttered desk).
-    This would use a pre-trained image analysis model or API.
-    """
-    # Placeholder logic
-    # try:
-    #     image = Image.open(io.BytesIO(image_data))
-    #     # Here, you would call a multimodal model API (e.g., a local model or a cloud service)
-    #     # to describe the image.
-    #     description = "A messy desk with many books and papers."
-    #     if "messy desk" in description or "cluttered room" in description:
-    #         return "cluttered"
-    #     return "neutral_image"
-    # except Exception as e:
-    #     print(f"Error analyzing image: {e}")
-    #     return "error"
-    return "cluttered"  # For demonstration purposes
-
-
-# --- NEW: Conceptual Voice Analysis Function ---
-def analyze_voice(voice_data):
-    """
-    (CONCEPTUAL) Analyzes a voice for sentiment and transcribes it.
-    This would use a voice-to-text service and a sentiment analysis model.
-    """
-    # Placeholder logic
-    # try:
-    #     # Send voice_data to a voice-to-text API
-    #     transcribed_text = "I'm feeling so stressed about my finals."
-    #     # Analyze the sentiment of the transcribed text
-    #     sentiment = "stressed"
-    #     return transcribed_text, sentiment
-    # except Exception as e:
-    #     print(f"Error analyzing voice: {e}")
-    #     return "", "error"
-    return "I am feeling so stressed.", "stressed"  # For demonstration purposes
-
-
-class ResourceProvider:
-    """Provides resources and recommendations based on mood and conversational context"""
-
+# This class contains the logic for creating data and training the model.
+class MoodModelTrainer:
     def __init__(self):
-        self.resources = {
-            'stressed': {
-                "message": "I understand you're feeling stressed. It's completely normal, especially as a student. Here are some ways to help you cope:",
-                'immediate_help': ["Take 5 deep breaths slowly", "Try the 5-4-3-2-1 grounding technique",
-                                   "Take a 10-minute walk"],
-                'study_tips': ["Break large tasks into smaller chunks", "Use the Pomodoro Technique",
-                               "Prioritize tasks by urgency"],
-            },
-            'anxious': {
-                "message": "I can see you're feeling anxious. Anxiety is very common, and there are effective ways to manage it:",
-                'immediate_help': ["Practice 4-7-8 breathing", "Challenge negative thoughts with positive self-talk",
-                                   "Visualize a calm, peaceful place"],
-                'coping_strategies': ["Identify and challenge anxious thought patterns",
-                                      "Prepare thoroughly for events that make you anxious", "Keep a worry journal"],
-            },
-            'depressed': {
-                "message": "I'm concerned about how you're feeling. Depression is serious, but it's treatable and you don't have to face it alone:",
-                'immediate_support': ["Reach out to a trusted friend or family member today",
-                                      "Engage in one small activity you usually enjoy",
-                                      "Get some sunlight or fresh air"],
-                'professional_help': ["Contact your campus counseling center immediately",
-                                      "Look into mental health professionals",
-                                      "Use crisis intervention services if needed"],
-                'emergency_note': "If you're having thoughts of self-harm, please call 988 (National Suicide Prevention Lifeline) or go to your nearest emergency room immediately."
-            },
-            'happy': {
-                "message": "It's wonderful that you're feeling happy! Let's talk about how to maintain and share this positive energy:",
-                'maintain_positivity': ["Share your positive energy with friends", "Practice gratitude",
-                                        "Celebrate your achievements"],
-            },
-            'motivated': {
-                "message": "I love seeing your motivation! Let's harness this energy effectively:",
-                'maximize_productivity': ["Create a detailed action plan for your goals",
-                                          "Break large projects into manageable steps",
-                                          "Track your progress regularly"],
-            },
-            'neutral': {
-                "message": "You seem to be in a balanced state. This is a great time for maintenance and prevention:",
-                'maintenance': ["Keep up with your current healthy routines", "Maintain your social connections",
-                                "Practice daily gratitude"],
-            },
-            # --- NEW: Image-specific recommendations ---
-            'cluttered': {
-                "message": "I see you're dealing with a cluttered space. Sometimes a little organization can help clear the mind!",
-                "tips": ["Break down the decluttering process into small steps.",
-                         "Start with one small area at a time.", "Put on some motivating music while you work."],
-            }
+        # Initializing a general pipeline. Optimal parameters will be found via GridSearchCV.
+        self.pipeline = Pipeline([
+            ('tfidf', TfidfVectorizer(stop_words='english')),
+            ('classifier', LogisticRegression(random_state=42, max_iter=1000))
+        ])
+
+        # Define the parameter grid for comprehensive hyperparameter tuning
+        self.param_grid = {
+            'tfidf__max_features': [1000, 2000, 4000],
+            'tfidf__ngram_range': [(1, 1), (1, 2)],
+            'classifier__C': [0.5, 1, 10],
         }
 
-        self.proactive_messages = [
-            "Hi there! Just checking in. How are you feeling today?",
-            "Hey! It's been a while. How can I help you right now?",
-            "How's your day going? I'm here if you need to talk.",
-            "I'm here to listen, whenever you're ready.",
-            "Just wanted to say hi. Hope you're having a good day.",
-        ]
+    def preprocess_text(self, text):
+        """
+        Refined preprocessing to correctly handle both English and Hindi text.
+        It keeps English letters (a-z) AND Devanagari characters (\u0900-\u097F).
+        """
+        text = str(text).lower()
+        # Regex keeps English, Hindi, and spaces. Removes all other symbols/numbers/junk.
+        text = re.sub(r'[^a-zA-Z\s\u0900-\u097F]', '', text)
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
 
-        self.general_talks = [
-            "Sometimes the first step is the hardest. Just sharing what’s on your mind can make a big difference.",
-            "It's completely okay to not have all the answers. Let's just talk it through.",
-            "You know, a lot of students feel this way. You're not alone in this.",
-            "Wait, the more you think, the worse it gets. Let's try to focus on one thing at a time.",
-            "It's like a mental traffic jam. Let's try to clear a path, one thought at a time.",
-            "Remember, your feelings are valid. What you're going through is real."
-        ]
+    def load_synthetic_data(self):
+        """Load the original small synthetic dataset."""
+        training_data = []
 
-        self.instruction_responses = {
-            "schedule": "I can't create a real-time schedule, but here's a simple one to help you manage: 1. Take a 5-minute break. 2. Do one small task. 3. Take another break. This helps prevent burnout.",
+        # Stressed examples
+        stressed_texts = ["I have three exams tomorrow and I haven't studied enough",
+                          "The assignment deadline is today and I'm nowhere near done",
+                          "I feel so overwhelmed with all the coursework",
+                          "Can't handle the pressure anymore, too much work",
+                          "I'm burning out from all these assignments"]
+        # Anxious examples
+        anxious_texts = ["I'm really nervous about the presentation tomorrow",
+                         "What if I fail the exam? I'm so worried", "My heart is racing thinking about the interview",
+                         "I can't stop worrying about my future", "Feeling anxious about meeting new people"]
+        # Depressed examples
+        depressed_texts = ["I don't see the point in anything anymore",
+                           "Feeling so lonely even when surrounded by people", "Everything feels meaningless and dark",
+                           "I'm tired all the time and don't want to do anything", "Nothing makes me happy anymore"]
+        # Neutral examples
+        neutral_texts = ["Just finished my homework for today", "Had a regular day at university",
+                         "Attending classes as usual", "Nothing special happening today",
+                         "Just working on my assignments"]
+        # Happy examples
+        happy_texts = ["Got an A on my exam, I'm so happy!", "Had an amazing day with friends",
+                       "Feeling grateful for this opportunity", "I'm excited about my new project",
+                       "Everything is going well in my life"]
+        # Motivated examples
+        motivated_texts = ["Ready to tackle all my assignments", "Feeling inspired to study harder",
+                           "I can achieve my goals if I work hard", "Motivated to improve my grades",
+                           "Excited to learn new things today"]
+
+        # Combine data (5 samples per original category for demonstration)
+        for text in stressed_texts: training_data.append((text, 'stressed'))
+        for text in anxious_texts: training_data.append((text, 'anxious'))
+        for text in depressed_texts: training_data.append((text, 'depressed'))
+        for text in neutral_texts: training_data.append((text, 'neutral'))
+        for text in happy_texts: training_data.append((text, 'happy'))
+        for text in motivated_texts: training_data.append((text, 'motivated'))
+
+        return training_data
+
+    def load_csv_data(self):
+        """Loads and processes data from the uploaded stress_phrases_dataset_2000.csv file."""
+        try:
+            # Using 'latin-1' encoding as a safe fallback for mixed-language files
+            df = pd.read_csv('mood_dataset_2000.csv', encoding='latin-1')
+        except FileNotFoundError:
+            print("ERROR: 'stress_phrases_dataset_2000.csv' not found. Skipping CSV data.")
+            return []
+        except Exception as e:
+            print(f"ERROR reading CSV file: {e}. Skipping CSV data.")
+            return []
+
+        # FIX 1: Strip whitespace from labels to prevent inconsistent data types (e.g., 'Medium ' vs 'Medium')
+        if 'perceived_stress_level' in df.columns:
+            df['perceived_stress_level'] = df['perceived_stress_level'].str.strip()
+
+        # --- CONSOLIDATED MAPPING STRATEGY ---
+        mood_mapping = {
+            'High': 'stressed',
+            'Medium': 'stressed',
+            'Low': 'neutral',
+            'Ambiguous': 'neutral',
+            'None': 'neutral'
         }
 
-    def get_recommendations(self, mood):
-        return self.resources.get(mood, self.resources['neutral'])
+        # Apply the mapping
+        df['perceived_mood'] = df['perceived_stress_level'].map(mood_mapping)
 
-    def get_proactive_message(self):
-        return random.choice(self.proactive_messages)
+        # Filter out any rows where input_text might be missing (NaN)
+        df.dropna(subset=['input_text', 'perceived_mood'], inplace=True)
 
-    def get_general_talk(self):
-        return random.choice(self.general_talks)
+        csv_data = list(zip(df['input_text'].tolist(), df['perceived_mood'].tolist()))
+        print(f"Loaded {len(csv_data)} samples from CSV.")
+        return csv_data
 
-    def get_instruction_response(self, instruction_key):
-        return self.instruction_responses.get(instruction_key)
+    def create_training_data(self):
+        """Combines data from both synthetic and CSV sources."""
+        synthetic_data = self.load_synthetic_data()
+        csv_data = self.load_csv_data()
 
+        combined_data = synthetic_data + csv_data
 
-class StudentCounselingChatbot:
-    """Main chatbot class that integrates all components and manages state"""
+        texts = [item[0] for item in combined_data]
+        labels = [item[1] for item in combined_data]
 
-    def __init__(self, model):
-        self.model = model
-        self.resource_provider = ResourceProvider()
+        print(f"Total combined samples for training: {len(combined_data)}")
+        return texts, labels
 
-    def analyze_input(self, user_input, user_id):
-        # Emergency keyword check
-        emergency_keywords = ['suicide', 'kill myself', 'end my life', 'want to die', 'harm myself', 'hurt myself']
-        if any(keyword in user_input.lower() for keyword in emergency_keywords):
-            return {
-                'emergency': True,
-                'message': "I'm very concerned about you. Please reach out for immediate help.",
-                'emergency_contacts': [
-                    "Call 988 (National Suicide Prevention Lifeline) right now",
-                    "Go to your nearest emergency room",
-                    "Text 'HELLO' to 741741 for the Crisis Text Line"
-                ]
-            }
+    def train(self):
+        print("1. Loading and preparing training data...")
+        texts, labels = self.create_training_data()
 
-        processed_text = preprocess_text(user_input)
+        if not texts:
+            print("Training aborted due to missing data.")
+            return None
 
-        # Check for instruction-based queries
-        if 'schedule' in processed_text or 'create a schedule' in processed_text:
-            return {
-                'emergency': False,
-                'mood': 'instruction',
-                'confidence': 1.0,
-                'recommendations': {
-                    'message': self.resource_provider.get_instruction_response("schedule")
-                }
-            }
+        # Preprocess all text data
+        preprocessed_texts = [self.preprocess_text(text) for text in texts]
 
-        # Check for previous stressed state
-        last_mood_data = user_sessions.get(user_id)
-        current_time = datetime.now()
+        # Split data for training
+        X_train, _, y_train, _ = train_test_split(
+            preprocessed_texts, labels, test_size=0.1, random_state=42, stratify=labels
+        )
 
-        STRESS_PERSISTENCE_MINS = 30
+        # --- ENHANCED: Hyperparameter Tuning with GridSearchCV ---
+        print("2. Starting comprehensive hyperparameter tuning...")
 
-        if last_mood_data and last_mood_data['mood'] == 'stressed' and \
-                (current_time - last_mood_data['timestamp']).total_seconds() / 60 < STRESS_PERSISTENCE_MINS:
+        grid_search = GridSearchCV(
+            self.pipeline,
+            self.param_grid,
+            cv=5,
+            scoring='accuracy',
+            n_jobs=-1,
+            verbose=2
+        )
 
-            mood = 'stressed'
-            confidence = last_mood_data['confidence']
-        else:
-            mood = self.model.predict([processed_text])[0]
-            confidence = max(self.model.predict_proba([processed_text])[0])
+        # This is the explicit step that runs the training
+        grid_search.fit(X_train, y_train)
 
-        # Add general talk for non-stressed, non-emergency messages for a more human feel
-        if mood not in ['stressed', 'depressed', 'anxious'] and confidence < 0.8:
-            response_message = f"{self.resource_provider.get_general_talk()} {self.resource_provider.get_recommendations(mood)['message']}"
-            recommendations = self.resource_provider.get_recommendations(mood)
-            recommendations['message'] = response_message
-        else:
-            recommendations = self.resource_provider.get_recommendations(mood)
+        print("\n" + "-" * 50)
+        print("Model training complete. Best Model Found:")
+        print(f"Best parameters: {grid_search.best_params_}")
+        print(f"Best cross-validation score: {grid_search.best_score_:.4f}")
+        print("-" * 50)
 
-        user_sessions[user_id] = {
-            'mood': mood,
-            'confidence': confidence,
-            'timestamp': current_time
-        }
-
-        response = {
-            'emergency': False,
-            'mood': mood,
-            'confidence': round(confidence, 2),
-            'recommendations': recommendations
-        }
-        return response
-
-    def get_proactive_response(self, user_id):
-        return {
-            'emergency': False,
-            'mood': 'proactive',
-            'confidence': 1.0,
-            'recommendations': {
-                'message': self.resource_provider.get_proactive_message()
-            }
-        }
+        # Return the best model found by the tuning process
+        best_model = grid_search.best_estimator_
+        return best_model
 
 
-# --- Initialize Chatbot ---
-if model:
-    chatbot = StudentCounselingChatbot(model)
-else:
-    chatbot = None
-
-
-# --- Define API Routes ---
-@app.route("/")
-def home():
-    """Render the chat page."""
-    return render_template("index.html")
-
-
-@app.route("/chat", methods=['POST'])
-def chat_endpoint():
-    """Handle chat messages."""
-    if not chatbot:
-        return jsonify({"error": "Chatbot is not initialized. Please train the model."}), 500
-
-    user_data = request.json
-    user_input = user_data.get("message")
-    user_id = user_data.get("user_id")
-
-    if not user_id:
-        user_id = str(uuid.uuid4())
-        response = chatbot.get_proactive_response(user_id)
-        response['user_id'] = user_id
-        return jsonify(response)
-
-    last_interaction = user_sessions.get(user_id)
-    if last_interaction and user_input == '':
-        time_since_last_message_mins = (datetime.now() - last_interaction['timestamp']).total_seconds() / 60
-        PROACTIVE_CHECKIN_THRESHOLD_MINS = 60
-
-        if time_since_last_message_mins > PROACTIVE_CHECKIN_THRESHOLD_MINS:
-            response = chatbot.get_proactive_response(user_id)
-            response['user_id'] = user_id
-            return jsonify(response)
-
-    if not user_input:
-        return jsonify({"error": "No message provided"}), 400
-
-    response = chatbot.analyze_input(user_input, user_id)
-    response['user_id'] = user_id
-    return jsonify(response)
-
-
-# --- NEW: API Endpoint for Image-based Analysis (Conceptual) ---
-@app.route("/chat/image", methods=['POST'])
-def chat_image_endpoint():
-    """
-    (CONCEPTUAL) Handles image messages.
-    This would accept an image file and use a conceptual model to analyze it.
-    """
-    # if not chatbot:
-    #     return jsonify({"error": "Chatbot is not initialized."}), 500
-
-    # user_id = request.form.get("user_id")
-    # image_file = request.files.get("image")
-
-    # if not user_id or not image_file:
-    #     return jsonify({"error": "Missing user ID or image file"}), 400
-
-    # image_data = image_file.read()
-    # image_analysis_result = analyze_image(image_data)
-
-    # if image_analysis_result == "cluttered":
-    #     recommendations = chatbot.resource_provider.resources['cluttered']
-    #     return jsonify({
-    #         "mood": "cluttered",
-    #         "recommendations": recommendations,
-    #         "user_id": user_id
-    #     })
-    # else:
-    #     return jsonify({"error": "Could not analyze image or no relevant context found."}), 400
-    return jsonify({"error": "Image analysis feature is not implemented in this version."}), 501
-
-
-# --- Run the App ---
+# Main training execution
 if __name__ == "__main__":
-    app.run(debug=True)
+    trainer = MoodModelTrainer()
+    trained_model = trainer.train()
+
+    if trained_model:
+        # Save the trained model to a file
+        with open('mood_model.pkl', 'wb') as f:
+            pickle.dump(trained_model, f)
+        print("3. Model saved successfully as 'mood_model.pkl'")
+    else:
+        print("3. Model saving skipped.")
