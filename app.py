@@ -77,9 +77,19 @@ class ResourceProvider:
                                 "Practice daily gratitude"],
             }
         }
+        self.proactive_messages = [
+            "Hi there! Just checking in. How are you feeling today?",
+            "Hey! It's been a while. How can I help you right now?",
+            "How's your day going? I'm here if you need to talk."
+        ]
 
     def get_recommendations(self, mood):
         return self.resources.get(mood, self.resources['neutral'])
+
+    def get_proactive_message(self):
+        # A simple way to get a random proactive message
+        import random
+        return random.choice(self.proactive_messages)
 
 
 class StudentCounselingChatbot:
@@ -88,8 +98,6 @@ class StudentCounselingChatbot:
     def __init__(self, model):
         self.model = model
         self.resource_provider = ResourceProvider()
-        # In-memory dictionary to store user session state
-        self.user_states = {}
 
     def analyze_input(self, user_input, user_id):
         # Emergency keyword check
@@ -108,13 +116,14 @@ class StudentCounselingChatbot:
         processed_text = preprocess_text(user_input)
 
         # Check for previous stressed state
-        last_mood_data = self.user_states.get(user_id)
+        last_mood_data = user_sessions.get(user_id)
         current_time = datetime.now()
 
-        # If user was recently stressed, maintain that state
-        STRESS_DURATION_MINS = 30
+        # Define a persistence window for the 'stressed' state
+        STRESS_PERSISTENCE_MINS = 30
+
         if last_mood_data and last_mood_data['mood'] == 'stressed' and \
-                (current_time - last_mood_data['timestamp']).total_seconds() / 60 < STRESS_DURATION_MINS:
+                (current_time - last_mood_data['timestamp']).total_seconds() / 60 < STRESS_PERSISTENCE_MINS:
 
             mood = 'stressed'
             confidence = last_mood_data['confidence']  # Keep the original confidence
@@ -123,12 +132,12 @@ class StudentCounselingChatbot:
             mood = self.model.predict([processed_text])[0]
             confidence = max(self.model.predict_proba([processed_text])[0])
 
-            # Update user state with the new mood and timestamp
-            self.user_states[user_id] = {
-                'mood': mood,
-                'confidence': confidence,
-                'timestamp': current_time
-            }
+        # Update user session with the new mood and timestamp
+        user_sessions[user_id] = {
+            'mood': mood,
+            'confidence': confidence,
+            'timestamp': current_time
+        }
 
         recommendations = self.resource_provider.get_recommendations(mood)
 
@@ -139,6 +148,16 @@ class StudentCounselingChatbot:
             'recommendations': recommendations
         }
         return response
+
+    def get_proactive_response(self, user_id):
+        return {
+            'emergency': False,
+            'mood': 'proactive',
+            'confidence': 1.0,  # This is a hard-coded confidence for a system message
+            'recommendations': {
+                'message': self.resource_provider.get_proactive_message()
+            }
+        }
 
 
 # --- Initialize Chatbot ---
@@ -165,15 +184,27 @@ def chat_endpoint():
     user_input = user_data.get("message")
     user_id = user_data.get("user_id")
 
-    if not user_input or not user_id:
-        # Generate a new user ID if none is provided
-        if not user_id:
-            user_id = str(uuid.uuid4())
-        else:
-            return jsonify({"error": "No message provided"}), 400
+    # If this is a new user, assign a new ID.
+    if not user_id:
+        user_id = str(uuid.uuid4())
+        response = chatbot.get_proactive_response(user_id)
+        return jsonify(response)
+
+    # Check for proactive engagement opportunity
+    last_interaction = user_sessions.get(user_id)
+    if last_interaction:
+        time_since_last_message_mins = (datetime.now() - last_interaction['timestamp']).total_seconds() / 60
+        PROACTIVE_CHECKIN_THRESHOLD_MINS = 60
+
+        if time_since_last_message_mins > PROACTIVE_CHECKIN_THRESHOLD_MINS and user_input == '':
+            response = chatbot.get_proactive_response(user_id)
+            return jsonify(response)
+
+    if not user_input:
+        return jsonify({"error": "No message provided"}), 400
 
     response = chatbot.analyze_input(user_input, user_id)
-    response['user_id'] = user_id  # Return the user ID to the client for future requests
+    response['user_id'] = user_id  # Return the user ID to the client
     return jsonify(response)
 
 
