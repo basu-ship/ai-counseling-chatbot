@@ -2,10 +2,16 @@
 from flask import Flask, request, jsonify, render_template
 import pickle
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
+import uuid
 
 # --- Initialize Flask App ---
 app = Flask(__name__)
+
+# --- In-memory user session state ---
+# In a production environment, this would be a database or a more robust
+# session management system (e.g., Flask-Session)
+user_sessions = {}
 
 # --- Load the Trained Model ---
 try:
@@ -16,6 +22,7 @@ except FileNotFoundError:
     print("Error: 'mood_model.pkl' not found. Please run train.py first to create the model.")
     model = None
 
+
 # --- Helper Classes and Functions ---
 def preprocess_text(text):
     text = text.lower()
@@ -23,51 +30,68 @@ def preprocess_text(text):
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
+
 class ResourceProvider:
     """Provides resources and recommendations based on mood"""
+
     def __init__(self):
-        # A simplified version of your resource dictionary
         self.resources = {
             'stressed': {
                 "message": "I understand you're feeling stressed. It's completely normal, especially as a student. Here are some ways to help you cope:",
-                'immediate_help': ["Take 5 deep breaths slowly", "Try the 5-4-3-2-1 grounding technique", "Take a 10-minute walk"],
-                'study_tips': ["Break large tasks into smaller chunks", "Use the Pomodoro Technique", "Prioritize tasks by urgency"],
+                'immediate_help': ["Take 5 deep breaths slowly", "Try the 5-4-3-2-1 grounding technique",
+                                   "Take a 10-minute walk"],
+                'study_tips': ["Break large tasks into smaller chunks", "Use the Pomodoro Technique",
+                               "Prioritize tasks by urgency"],
             },
             'anxious': {
                 "message": "I can see you're feeling anxious. Anxiety is very common, and there are effective ways to manage it:",
-                'immediate_help': ["Practice 4-7-8 breathing", "Challenge negative thoughts with positive self-talk", "Visualize a calm, peaceful place"],
-                'coping_strategies': ["Identify and challenge anxious thought patterns", "Prepare thoroughly for events that make you anxious", "Keep a worry journal"],
+                'immediate_help': ["Practice 4-7-8 breathing", "Challenge negative thoughts with positive self-talk",
+                                   "Visualize a calm, peaceful place"],
+                'coping_strategies': ["Identify and challenge anxious thought patterns",
+                                      "Prepare thoroughly for events that make you anxious", "Keep a worry journal"],
             },
             'depressed': {
                 "message": "I'm concerned about how you're feeling. Depression is serious, but it's treatable and you don't have to face it alone:",
-                'immediate_support': ["Reach out to a trusted friend or family member today", "Engage in one small activity you usually enjoy", "Get some sunlight or fresh air"],
-                'professional_help': ["Contact your campus counseling center immediately", "Look into mental health professionals", "Use crisis intervention services if needed"],
+                'immediate_support': ["Reach out to a trusted friend or family member today",
+                                      "Engage in one small activity you usually enjoy",
+                                      "Get some sunlight or fresh air"],
+                'professional_help': ["Contact your campus counseling center immediately",
+                                      "Look into mental health professionals",
+                                      "Use crisis intervention services if needed"],
                 'emergency_note': "If you're having thoughts of self-harm, please call 988 (National Suicide Prevention Lifeline) or go to your nearest emergency room immediately."
             },
             'happy': {
                 "message": "It's wonderful that you're feeling happy! Let's talk about how to maintain and share this positive energy:",
-                'maintain_positivity': ["Share your positive energy with friends", "Practice gratitude", "Celebrate your achievements"],
+                'maintain_positivity': ["Share your positive energy with friends", "Practice gratitude",
+                                        "Celebrate your achievements"],
             },
             'motivated': {
                 "message": "I love seeing your motivation! Let's harness this energy effectively:",
-                'maximize_productivity': ["Create a detailed action plan for your goals", "Break large projects into manageable steps", "Track your progress regularly"],
+                'maximize_productivity': ["Create a detailed action plan for your goals",
+                                          "Break large projects into manageable steps",
+                                          "Track your progress regularly"],
             },
             'neutral': {
                 "message": "You seem to be in a balanced state. This is a great time for maintenance and prevention:",
-                'maintenance': ["Keep up with your current healthy routines", "Maintain your social connections", "Practice daily gratitude"],
+                'maintenance': ["Keep up with your current healthy routines", "Maintain your social connections",
+                                "Practice daily gratitude"],
             }
         }
 
     def get_recommendations(self, mood):
         return self.resources.get(mood, self.resources['neutral'])
 
+
 class StudentCounselingChatbot:
-    """Main chatbot class that integrates all components"""
+    """Main chatbot class that integrates all components and manages state"""
+
     def __init__(self, model):
         self.model = model
         self.resource_provider = ResourceProvider()
-        
-    def analyze_input(self, user_input):
+        # In-memory dictionary to store user session state
+        self.user_states = {}
+
+    def analyze_input(self, user_input, user_id):
         # Emergency keyword check
         emergency_keywords = ['suicide', 'kill myself', 'end my life', 'want to die', 'harm myself', 'hurt myself']
         if any(keyword in user_input.lower() for keyword in emergency_keywords):
@@ -81,13 +105,33 @@ class StudentCounselingChatbot:
                 ]
             }
 
-        # Predict mood using the loaded ML model
         processed_text = preprocess_text(user_input)
-        mood = self.model.predict([processed_text])[0]
-        confidence = max(self.model.predict_proba([processed_text])[0])
-        
+
+        # Check for previous stressed state
+        last_mood_data = self.user_states.get(user_id)
+        current_time = datetime.now()
+
+        # If user was recently stressed, maintain that state
+        STRESS_DURATION_MINS = 30
+        if last_mood_data and last_mood_data['mood'] == 'stressed' and \
+                (current_time - last_mood_data['timestamp']).total_seconds() / 60 < STRESS_DURATION_MINS:
+
+            mood = 'stressed'
+            confidence = last_mood_data['confidence']  # Keep the original confidence
+        else:
+            # Predict new mood if not in a recent stressed state
+            mood = self.model.predict([processed_text])[0]
+            confidence = max(self.model.predict_proba([processed_text])[0])
+
+            # Update user state with the new mood and timestamp
+            self.user_states[user_id] = {
+                'mood': mood,
+                'confidence': confidence,
+                'timestamp': current_time
+            }
+
         recommendations = self.resource_provider.get_recommendations(mood)
-        
+
         response = {
             'emergency': False,
             'mood': mood,
@@ -96,11 +140,13 @@ class StudentCounselingChatbot:
         }
         return response
 
+
 # --- Initialize Chatbot ---
 if model:
     chatbot = StudentCounselingChatbot(model)
 else:
     chatbot = None
+
 
 # --- Define API Routes ---
 @app.route("/")
@@ -108,18 +154,28 @@ def home():
     """Render the chat page."""
     return render_template("index.html")
 
+
 @app.route("/chat", methods=['POST'])
 def chat_endpoint():
     """Handle chat messages."""
     if not chatbot:
         return jsonify({"error": "Chatbot is not initialized. Please train the model."}), 500
 
-    user_input = request.json.get("message")
-    if not user_input:
-        return jsonify({"error": "No message provided"}), 400
-    
-    response = chatbot.analyze_input(user_input)
+    user_data = request.json
+    user_input = user_data.get("message")
+    user_id = user_data.get("user_id")
+
+    if not user_input or not user_id:
+        # Generate a new user ID if none is provided
+        if not user_id:
+            user_id = str(uuid.uuid4())
+        else:
+            return jsonify({"error": "No message provided"}), 400
+
+    response = chatbot.analyze_input(user_input, user_id)
+    response['user_id'] = user_id  # Return the user ID to the client for future requests
     return jsonify(response)
+
 
 # --- Run the App ---
 if __name__ == "__main__":
